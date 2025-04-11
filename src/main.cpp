@@ -1,6 +1,7 @@
 #include "RESTServer.hpp"
 #include "ObjectDetector.hpp"
 #include "FaceDetector.hpp"
+#include "ImageClassifier.hpp"
 #include <iostream>
 #include <string>
 #include <filesystem>
@@ -27,6 +28,16 @@ void loadFaceModel(const std::string& modelName, const std::string& modelPath) {
     std::cout << "Successfully loaded " << modelName << std::endl;
 }
 
+void loadImageClassifier(const std::string& modelName, const std::string& modelPath) {
+    auto classifier = std::make_shared<tAI::CVImageClassifier>();
+    if (!classifier->loadModel(modelPath)) {
+        std::cerr << "Failed to load " << modelName << " from " << modelPath << std::endl;
+        return;
+    }
+    tAI::ModelManager::getInstance().registerModel(modelName, classifier);
+    std::cout << "Successfully loaded " << modelName << std::endl;
+}
+
 int main() {
     try {
         // Get the project directory
@@ -48,6 +59,10 @@ int main() {
         std::string faceModelPath = (modelsDir / "face_detection" / "deploy.prototxt").string();
         loadFaceModel("face_detection", faceModelPath);
 
+        // Load image classification model
+        std::string classificationPath = (modelsDir / "classification" / "deploy").string();
+        loadImageClassifier("image_classification", classificationPath);
+
         // Create and start the REST server
         tAI::RESTServer server("0.0.0.0", 8080);
         
@@ -61,6 +76,11 @@ int main() {
         std::cout << "  POST /detect_faces" << std::endl;
         std::cout << "    Request body: {" << std::endl;
         std::cout << "      \"model_id\": \"face_detection\"," << std::endl;
+        std::cout << "      \"image\": \"<base64_encoded_image>\"" << std::endl;
+        std::cout << "    }" << std::endl;
+        std::cout << "  POST /classify" << std::endl;
+        std::cout << "    Request body: {" << std::endl;
+        std::cout << "      \"model_id\": \"image_classification\"," << std::endl;
         std::cout << "      \"image\": \"<base64_encoded_image>\"" << std::endl;
         std::cout << "    }" << std::endl;
         

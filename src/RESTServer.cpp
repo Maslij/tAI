@@ -1,6 +1,7 @@
 #include "RESTServer.hpp"
 #include "ObjectDetector.hpp"
 #include "FaceDetector.hpp"
+#include "ImageClassifier.hpp"
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
@@ -280,6 +281,59 @@ private:
                 }
                 catch(const std::exception& e) {
                     std::cerr << "Error processing face detection request: " << e.what() << std::endl;
+                    response_.result(http::status::internal_server_error);
+                    response_.set(http::field::content_type, "text/plain");
+                    response_.body() = std::string("Error: ") + e.what();
+                }
+            }
+            else if(request_.target() == "/classify") {
+                try {
+                    // Parse the JSON request
+                    auto req_body = json::parse(request_.body());
+                    std::string model_id = req_body["model_id"];
+                    std::string image_base64 = req_body["image"];
+
+                    // Remove data URL prefix if present
+                    size_t comma_pos = image_base64.find(',');
+                    if (comma_pos != std::string::npos) {
+                        image_base64 = image_base64.substr(comma_pos + 1);
+                    }
+
+                    // Decode base64 image
+                    std::vector<unsigned char> image_data = base64_decode(image_base64);
+                    if (image_data.empty()) {
+                        throw std::runtime_error("Failed to decode base64 image");
+                    }
+
+                    cv::Mat image = cv::imdecode(image_data, cv::IMREAD_COLOR);
+                    if (image.empty()) {
+                        throw std::runtime_error("Failed to decode image data");
+                    }
+
+                    // Get the model from ModelManager
+                    auto classifier = ModelManager::getInstance().getModel<ImageClassifier>(model_id);
+                    if(!classifier) {
+                        throw std::runtime_error("Classification model not found");
+                    }
+
+                    // Perform classification
+                    auto classifications = classifier->classify(image);
+
+                    // Convert classifications to JSON
+                    json response_json = json::array();
+                    for(const auto& cls : classifications) {
+                        json classification;
+                        classification["class_name"] = cls.className;
+                        classification["confidence"] = cls.confidence;
+                        response_json.push_back(classification);
+                    }
+
+                    response_.result(http::status::ok);
+                    response_.set(http::field::content_type, "application/json");
+                    response_.body() = response_json.dump();
+                }
+                catch(const std::exception& e) {
+                    std::cerr << "Error processing classification request: " << e.what() << std::endl;
                     response_.result(http::status::internal_server_error);
                     response_.set(http::field::content_type, "text/plain");
                     response_.body() = std::string("Error: ") + e.what();
