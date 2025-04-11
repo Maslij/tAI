@@ -1,5 +1,6 @@
 #include "RESTServer.hpp"
 #include "ObjectDetector.hpp"
+#include "FaceDetector.hpp"
 #include <iostream>
 #include <string>
 #include <filesystem>
@@ -13,6 +14,16 @@ void loadModel(const std::string& modelName, const std::string& modelPath) {
         return;
     }
     tAI::ModelManager::getInstance().registerModel(modelName, yolo);
+    std::cout << "Successfully loaded " << modelName << std::endl;
+}
+
+void loadFaceModel(const std::string& modelName, const std::string& modelPath) {
+    auto faceDetector = std::make_shared<tAI::FaceDetector>();
+    if (!faceDetector->loadModel(modelPath)) {
+        std::cerr << "Failed to load " << modelName << " from " << modelPath << std::endl;
+        return;
+    }
+    tAI::ModelManager::getInstance().registerModel(modelName, faceDetector);
     std::cout << "Successfully loaded " << modelName << std::endl;
 }
 
@@ -33,15 +44,23 @@ int main() {
         std::string yolov4Base = (modelsDir / "yolov4").string();
         loadModel("yolov4", yolov4Base);
 
+        // Load face detection model - assuming model file is deploy.prototxt
+        std::string faceModelPath = (modelsDir / "face_detection" / "deploy.prototxt").string();
+        loadFaceModel("face_detection", faceModelPath);
+
         // Create and start the REST server
         tAI::RESTServer server("0.0.0.0", 8080);
-        server.registerDetectionEndpoint("/detect");
         
         std::cout << "Starting server on http://0.0.0.0:8080" << std::endl;
         std::cout << "Available endpoints:" << std::endl;
         std::cout << "  POST /detect" << std::endl;
         std::cout << "    Request body: {" << std::endl;
         std::cout << "      \"model_id\": \"yolov3\" or \"yolov4\"," << std::endl;
+        std::cout << "      \"image\": \"<base64_encoded_image>\"" << std::endl;
+        std::cout << "    }" << std::endl;
+        std::cout << "  POST /detect_faces" << std::endl;
+        std::cout << "    Request body: {" << std::endl;
+        std::cout << "      \"model_id\": \"face_detection\"," << std::endl;
         std::cout << "      \"image\": \"<base64_encoded_image>\"" << std::endl;
         std::cout << "    }" << std::endl;
         

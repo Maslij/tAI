@@ -1,5 +1,6 @@
 #include "RESTServer.hpp"
 #include "ObjectDetector.hpp"
+#include "FaceDetector.hpp"
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
@@ -28,7 +29,6 @@ namespace {
         15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 64, 64, 64, 64, 64,
         64, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40,
         41, 42, 43, 44, 45, 46, 47, 48, 49, 50, 51, 64, 64, 64, 64, 64,
-        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
@@ -209,6 +209,77 @@ private:
                 }
                 catch(const std::exception& e) {
                     std::cerr << "Error processing request: " << e.what() << std::endl;
+                    response_.result(http::status::internal_server_error);
+                    response_.set(http::field::content_type, "text/plain");
+                    response_.body() = std::string("Error: ") + e.what();
+                }
+            }
+            else if(request_.target() == "/detect_faces") {
+                try {
+                    // Parse the JSON request
+                    auto req_body = json::parse(request_.body());
+                    std::string model_id = req_body["model_id"];
+                    std::string image_base64 = req_body["image"];
+
+                    // Remove data URL prefix if present
+                    size_t comma_pos = image_base64.find(',');
+                    if (comma_pos != std::string::npos) {
+                        image_base64 = image_base64.substr(comma_pos + 1);
+                    }
+
+                    // Decode base64 image
+                    std::vector<unsigned char> image_data = base64_decode(image_base64);
+                    if (image_data.empty()) {
+                        throw std::runtime_error("Failed to decode base64 image");
+                    }
+
+                    cv::Mat image = cv::imdecode(image_data, cv::IMREAD_COLOR);
+                    if (image.empty()) {
+                        throw std::runtime_error("Failed to decode image data");
+                    }
+
+                    // Get the model from ModelManager
+                    auto detector = ModelManager::getInstance().getModel<FaceDetector>(model_id);
+                    if(!detector) {
+                        throw std::runtime_error("Face detector model not found");
+                    }
+
+                    // Perform face detection
+                    auto detections = detector->detect(image);
+
+                    // Convert detections to JSON
+                    json response_json = json::array();
+                    for(const auto& face : detections) {
+                        json detection;
+                        detection["confidence"] = face.confidence;
+                        detection["bbox"] = {
+                            {"x", face.bbox.x},
+                            {"y", face.bbox.y},
+                            {"width", face.bbox.width},
+                            {"height", face.bbox.height}
+                        };
+                        
+                        // Add landmarks if available
+                        if (!face.landmarks.empty()) {
+                            json landmarks_json = json::array();
+                            for (const auto& point : face.landmarks) {
+                                landmarks_json.push_back({
+                                    {"x", point.x},
+                                    {"y", point.y}
+                                });
+                            }
+                            detection["landmarks"] = landmarks_json;
+                        }
+                        
+                        response_json.push_back(detection);
+                    }
+
+                    response_.result(http::status::ok);
+                    response_.set(http::field::content_type, "application/json");
+                    response_.body() = response_json.dump();
+                }
+                catch(const std::exception& e) {
+                    std::cerr << "Error processing face detection request: " << e.what() << std::endl;
                     response_.result(http::status::internal_server_error);
                     response_.set(http::field::content_type, "text/plain");
                     response_.body() = std::string("Error: ") + e.what();

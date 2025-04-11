@@ -1,5 +1,6 @@
 set(SOURCES
     YOLODetector.cpp
+    FaceDetector.cpp
     RESTServer.cpp
     main.cpp
 )
