@@ -11,6 +11,7 @@ A C++ service for efficient AI model serving, focusing on computer vision tasks.
   - YOLOv3
   - YOLOv4
   - Face Detection
+  - Image Classification
   - (More to come)
 
 ## Prerequisites
@@ -104,6 +105,36 @@ The server will start on `http://0.0.0.0:8080` by default.
             {"x": 145, "y": 150},
             {"x": 175, "y": 150}
         ]
+    }
+]
+```
+
+### Image Classification
+
+**Endpoint:** `POST /classify`
+
+**Request Body:**
+```json
+{
+    "model_id": "image_classification",
+    "image": "<base64_encoded_image>"
+}
+```
+
+**Response:**
+```json
+[
+    {
+        "class_name": "cat",
+        "confidence": 0.92
+    },
+    {
+        "class_name": "tabby cat",
+        "confidence": 0.85
+    },
+    {
+        "class_name": "tiger cat",
+        "confidence": 0.67
     }
 ]
 ```
