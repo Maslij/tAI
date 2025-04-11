@@ -89,7 +89,15 @@ public:
             acceptor_.bind(endpoint);
             acceptor_.listen(net::socket_base::max_listen_connections);
             
-            std::cout << "Server started at " << host_ << ":" << port_ << std::endl;
+            std::cout << "Starting server on http://" << host_ << ":" << port_ << std::endl;
+            std::cout << "Available endpoints:" << std::endl;
+            std::cout << "  GET/HEAD /health" << std::endl;
+            std::cout << "    Returns: 200 OK if server is healthy" << std::endl;
+            std::cout << "  POST /detect" << std::endl;
+            std::cout << "    Request body: {" << std::endl;
+            std::cout << "      \"model_id\": \"yolov3\" or \"yolov4\"," << std::endl;
+            std::cout << "      \"image\": \"<base64_encoded_image>\"" << std::endl;
+            std::cout << "    }" << std::endl;
             
             accept();
             ioc_.run();
@@ -141,15 +149,23 @@ private:
             response_.version(request_.version());
             response_.keep_alive(false);
 
-            switch(request_.method()) {
-                case http::verb::post:
-                    handle_post();
-                    break;
-                default:
-                    response_.result(http::status::bad_request);
-                    response_.set(http::field::content_type, "text/plain");
-                    response_.body() = "Invalid request method";
-                    break;
+            // Handle health endpoint for both HEAD and GET methods
+            if(request_.target() == "/health") {
+                response_.result(http::status::ok);
+                response_.set(http::field::content_type, "application/json");
+                if(request_.method() == http::verb::get) {
+                    // For GET requests, include a JSON body
+                    response_.body() = "{\"status\":\"ok\",\"service\":\"tAI\"}";
+                }
+                // For HEAD requests, the body is ignored but the 200 status is returned
+            }
+            else if(request_.method() == http::verb::post) {
+                handle_post();
+            }
+            else {
+                response_.result(http::status::bad_request);
+                response_.set(http::field::content_type, "text/plain");
+                response_.body() = "Invalid request method";
             }
 
             write_response();
