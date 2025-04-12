@@ -10,6 +10,11 @@ A C++ service for efficient AI model serving, focusing on computer vision tasks.
 - Support for multiple model types:
   - YOLOv3
   - YOLOv4
+  - YOLOv3-tiny 
+  - YOLOv4-tiny
+  - MobileNet-SSD
+  - YOLOX-Nano
+  - NanoDet
   - Face Detection
   - Image Classification
   - (More to come)
@@ -47,6 +52,57 @@ The server will start on `http://0.0.0.0:8080` by default.
 
 ## API Endpoints
 
+### Health Check
+
+**Endpoint:** `GET /health`
+
+**Response:**
+```json
+{
+    "status": "ok",
+    "service": "tAI"
+}
+```
+
+### Module Health Check
+
+**Endpoint:** `GET /module_health`
+
+Returns detailed information about the status of all models that are registered in the system, including whether they are successfully loaded.
+
+**Response:**
+```json
+{
+    "status": "ok",
+    "service": "tAI",
+    "models": [
+        {
+            "id": "yolov3",
+            "status": "loaded", 
+            "type": "object_detection",
+            "classes": ["person", "car", "dog", "..."]
+        },
+        {
+            "id": "yolov4",
+            "status": "not_loaded",
+            "type": "object_detection"
+        },
+        {
+            "id": "face_detection",
+            "status": "loaded",
+            "type": "face_detection"
+        },
+        {
+            "id": "image_classification",
+            "status": "loaded",
+            "type": "image_classification"
+        }
+    ]
+}
+```
+
+The response includes all registered models with their loading status (`loaded` or `not_loaded`), model type, and for loaded models, additional information like available class names.
+
 ### Object Detection
 
 **Endpoint:** `POST /detect`
@@ -54,7 +110,7 @@ The server will start on `http://0.0.0.0:8080` by default.
 **Request Body:**
 ```json
 {
-    "model_id": "yolov3",  // or "yolov4"
+    "model_id": "yolov3",  // or "yolov4", "yolov4-tiny", "yolov3-tiny", "mobilenet-ssd", "yolox-nano", "nanodet"
     "image": "<base64_encoded_image>"
 }
 ```

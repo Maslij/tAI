@@ -93,9 +93,11 @@ public:
             std::cout << "Available endpoints:" << std::endl;
             std::cout << "  GET/HEAD /health" << std::endl;
             std::cout << "    Returns: 200 OK if server is healthy" << std::endl;
+            std::cout << "  GET /module_health" << std::endl;
+            std::cout << "    Returns: JSON with status of all loaded models" << std::endl;
             std::cout << "  POST /detect" << std::endl;
             std::cout << "    Request body: {" << std::endl;
-            std::cout << "      \"model_id\": \"yolov3\" or \"yolov4\"," << std::endl;
+            std::cout << "      \"model_id\": \"yolov3\", \"yolov4\", \"yolov4-tiny\", \"yolov3-tiny\", \"mobilenet-ssd\", \"yolox-nano\", or \"nanodet\"," << std::endl;
             std::cout << "      \"image\": \"<base64_encoded_image>\"" << std::endl;
             std::cout << "    }" << std::endl;
             
@@ -159,6 +161,9 @@ private:
                 }
                 // For HEAD requests, the body is ignored but the 200 status is returned
             }
+            else if(request_.target() == "/module_health" && request_.method() == http::verb::get) {
+                handle_module_health();
+            }
             else if(request_.method() == http::verb::post) {
                 handle_post();
             }
@@ -169,6 +174,63 @@ private:
             }
 
             write_response();
+        }
+
+        void handle_module_health() {
+            try {
+                json response_json;
+                response_json["status"] = "ok";
+                response_json["service"] = "tAI";
+                
+                // Model support information
+                json models = json::array();
+                
+                // Check for YOLO models
+                std::vector<std::string> yolo_models = {
+                    "yolov3", "yolov4", "yolov4-tiny", "yolov3-tiny", 
+                    "mobilenet-ssd", "yolox-nano", "nanodet"
+                };
+                
+                for (const auto& model_id : yolo_models) {
+                    json model_info;
+                    model_info["id"] = model_id;
+                    auto model = ModelManager::getInstance().getModel<ObjectDetector>(model_id);
+                    model_info["status"] = model ? "loaded" : "not_loaded";
+                    model_info["type"] = "object_detection";
+                    if (model) {
+                        model_info["classes"] = model->getClassNames();
+                    }
+                    models.push_back(model_info);
+                }
+                
+                // Check face detection model
+                json face_model;
+                face_model["id"] = "face_detection";
+                auto face_detector = ModelManager::getInstance().getModel<FaceDetector>("face_detection");
+                face_model["status"] = face_detector ? "loaded" : "not_loaded";
+                face_model["type"] = "face_detection";
+                models.push_back(face_model);
+                
+                // Check image classification model
+                json classification_model;
+                classification_model["id"] = "image_classification";
+                auto classifier = ModelManager::getInstance().getModel<ImageClassifier>("image_classification");
+                classification_model["status"] = classifier ? "loaded" : "not_loaded";
+                classification_model["type"] = "image_classification";
+                models.push_back(classification_model);
+                
+                response_json["models"] = models;
+                
+                response_.result(http::status::ok);
+                response_.set(http::field::content_type, "application/json");
+                response_.body() = response_json.dump();
+            }
+            catch(const std::exception& e) {
+                std::cerr << "Error processing module health request: " << e.what() << std::endl;
+                response_.result(http::status::internal_server_error);
+                response_.set(http::field::content_type, "text/plain");
+                response_.body() = std::string("Error: ") + e.what();
+            }
         }
 
         void handle_post() {
