@@ -12,6 +12,11 @@
 #include <opencv2/imgcodecs.hpp>
 #include <vector>
 #include <string>
+// For shared memory support
+#include <sys/mman.h>
+#include <sys/stat.h>
+#include <fcntl.h>
+#include <unistd.h>
 
 namespace beast = boost::beast;
 namespace http = beast::http;
@@ -70,6 +75,78 @@ namespace {
 
         return decoded;
     }
+    
+    // Shared memory image structure definition
+    struct SharedMemoryImage {
+        int width;
+        int height;
+        int channels;
+        int step;
+        size_t dataSize;
+        // Data follows this header in the shared memory
+    };
+    
+    // Function to access image from shared memory
+    cv::Mat getImageFromSharedMemory(const std::string& sharedMemoryKey) {
+        // Open shared memory
+        int fd = shm_open(sharedMemoryKey.c_str(), O_RDONLY, 0);
+        if (fd == -1) {
+            throw std::runtime_error("Failed to open shared memory: " + std::string(strerror(errno)));
+        }
+        
+        // Get the size of the shared memory segment
+        struct stat sb;
+        if (fstat(fd, &sb) == -1) {
+            close(fd);
+            throw std::runtime_error("Failed to get shared memory size: " + std::string(strerror(errno)));
+        }
+        
+        // Map the shared memory segment
+        void* addr = mmap(NULL, sb.st_size, PROT_READ, MAP_SHARED, fd, 0);
+        if (addr == MAP_FAILED) {
+            close(fd);
+            throw std::runtime_error("Failed to map shared memory: " + std::string(strerror(errno)));
+        }
+        
+        // Read the header
+        SharedMemoryImage* header = static_cast<SharedMemoryImage*>(addr);
+        int width = header->width;
+        int height = header->height;
+        int channels = header->channels;
+        int step = header->step;
+        size_t dataSize = header->dataSize;
+        
+        // Validate image dimensions
+        if (width <= 0 || height <= 0 || channels <= 0 || step <= 0 || dataSize == 0 || 
+            dataSize > sb.st_size - sizeof(SharedMemoryImage)) {
+            munmap(addr, sb.st_size);
+            close(fd);
+            throw std::runtime_error("Invalid image dimensions in shared memory");
+        }
+        
+        // Get the data pointer
+        unsigned char* dataStart = static_cast<unsigned char*>(addr) + sizeof(SharedMemoryImage);
+        
+        // Create a cv::Mat to copy the data into
+        cv::Mat image(height, width, CV_8UC(channels));
+        
+        // Copy the data
+        if (step == width * channels) {
+            // Continuous data, can copy all at once
+            memcpy(image.data, dataStart, dataSize);
+        } else {
+            // Copy row by row
+            for (int i = 0; i < height; ++i) {
+                memcpy(image.data + i * image.step, dataStart + i * step, width * channels);
+            }
+        }
+        
+        // Unmap and close the shared memory
+        munmap(addr, sb.st_size);
+        close(fd);
+        
+        return image;
+    }
 }
 
 namespace tAI {
@@ -99,6 +176,9 @@ public:
             std::cout << "    Request body: {" << std::endl;
             std::cout << "      \"model_id\": \"yolov3\", \"yolov4\", \"yolov4-tiny\", \"yolov3-tiny\", \"mobilenet-ssd\", \"yolox-nano\", or \"nanodet\"," << std::endl;
             std::cout << "      \"image\": \"<base64_encoded_image>\"" << std::endl;
+            std::cout << "      OR" << std::endl;
+            std::cout << "      \"use_shared_memory\": true," << std::endl;
+            std::cout << "      \"shared_memory_key\": \"<shared_memory_key>\"" << std::endl;
             std::cout << "    }" << std::endl;
             
             accept();
@@ -239,23 +319,65 @@ private:
                     // Parse the JSON request
                     auto req_body = json::parse(request_.body());
                     std::string model_id = req_body["model_id"];
-                    std::string image_base64 = req_body["image"];
-
-                    // Remove data URL prefix if present
-                    size_t comma_pos = image_base64.find(',');
-                    if (comma_pos != std::string::npos) {
-                        image_base64 = image_base64.substr(comma_pos + 1);
+                    
+                    cv::Mat image;
+                    std::string sharedMemoryKey;
+                    bool useSharedMemory = false;
+                    
+                    // Check if using shared memory or base64
+                    if (req_body.contains("use_shared_memory") && req_body["use_shared_memory"].is_boolean()) {
+                        useSharedMemory = req_body["use_shared_memory"].get<bool>();
                     }
+                    
+                    if (useSharedMemory) {
+                        // Get image from shared memory
+                        if (!req_body.contains("shared_memory_key") || !req_body["shared_memory_key"].is_string()) {
+                            throw std::runtime_error("Shared memory key not provided");
+                        }
+                        
+                        sharedMemoryKey = req_body["shared_memory_key"].get<std::string>();
+                        std::cout << "Using shared memory with key: " << sharedMemoryKey << std::endl;
+                        
+                        try {
+                            // Get image from shared memory
+                            image = getImageFromSharedMemory(sharedMemoryKey);
+                            
+                            if (image.empty()) {
+                                throw std::runtime_error("Empty image received from shared memory");
+                            }
+                            
+                            std::cout << "Successfully loaded image from shared memory: " 
+                                      << image.cols << "x" << image.rows << " channels=" 
+                                      << image.channels() << std::endl;
+                        } 
+                        catch (const std::exception& e) {
+                            throw std::runtime_error(std::string("Failed to load image from shared memory: ") + e.what());
+                        }
+                    } 
+                    else {
+                        // Use base64 image
+                        if (!req_body.contains("image") || !req_body["image"].is_string()) {
+                            throw std::runtime_error("Base64 image not provided");
+                        }
+                        
+                        std::string image_base64 = req_body["image"];
+                        
+                        // Remove data URL prefix if present
+                        size_t comma_pos = image_base64.find(',');
+                        if (comma_pos != std::string::npos) {
+                            image_base64 = image_base64.substr(comma_pos + 1);
+                        }
 
-                    // Decode base64 image
-                    std::vector<unsigned char> image_data = base64_decode(image_base64);
-                    if (image_data.empty()) {
-                        throw std::runtime_error("Failed to decode base64 image");
-                    }
+                        // Decode base64 image
+                        std::vector<unsigned char> image_data = base64_decode(image_base64);
+                        if (image_data.empty()) {
+                            throw std::runtime_error("Failed to decode base64 image");
+                        }
 
-                    cv::Mat image = cv::imdecode(image_data, cv::IMREAD_COLOR);
-                    if (image.empty()) {
-                        throw std::runtime_error("Failed to decode image data");
+                        image = cv::imdecode(image_data, cv::IMREAD_COLOR);
+                        if (image.empty()) {
+                            throw std::runtime_error("Failed to decode image data");
+                        }
                     }
 
                     // Get the model from ModelManager
@@ -298,23 +420,61 @@ private:
                     // Parse the JSON request
                     auto req_body = json::parse(request_.body());
                     std::string model_id = req_body["model_id"];
-                    std::string image_base64 = req_body["image"];
-
-                    // Remove data URL prefix if present
-                    size_t comma_pos = image_base64.find(',');
-                    if (comma_pos != std::string::npos) {
-                        image_base64 = image_base64.substr(comma_pos + 1);
+                    
+                    cv::Mat image;
+                    std::string sharedMemoryKey;
+                    bool useSharedMemory = false;
+                    
+                    // Check if using shared memory or base64
+                    if (req_body.contains("use_shared_memory") && req_body["use_shared_memory"].is_boolean()) {
+                        useSharedMemory = req_body["use_shared_memory"].get<bool>();
                     }
+                    
+                    if (useSharedMemory) {
+                        // Get image from shared memory
+                        if (!req_body.contains("shared_memory_key") || !req_body["shared_memory_key"].is_string()) {
+                            throw std::runtime_error("Shared memory key not provided");
+                        }
+                        
+                        sharedMemoryKey = req_body["shared_memory_key"].get<std::string>();
+                        std::cout << "Using shared memory with key: " << sharedMemoryKey << std::endl;
+                        
+                        try {
+                            // Get image from shared memory
+                            image = getImageFromSharedMemory(sharedMemoryKey);
+                            
+                            if (image.empty()) {
+                                throw std::runtime_error("Empty image received from shared memory");
+                            }
+                        } 
+                        catch (const std::exception& e) {
+                            throw std::runtime_error(std::string("Failed to load image from shared memory: ") + e.what());
+                        }
+                    } 
+                    else {
+                        // Use base64 image
+                        if (!req_body.contains("image") || !req_body["image"].is_string()) {
+                            throw std::runtime_error("Base64 image not provided");
+                        }
+                        
+                        std::string image_base64 = req_body["image"];
 
-                    // Decode base64 image
-                    std::vector<unsigned char> image_data = base64_decode(image_base64);
-                    if (image_data.empty()) {
-                        throw std::runtime_error("Failed to decode base64 image");
-                    }
+                        // Remove data URL prefix if present
+                        size_t comma_pos = image_base64.find(',');
+                        if (comma_pos != std::string::npos) {
+                            image_base64 = image_base64.substr(comma_pos + 1);
+                        }
 
-                    cv::Mat image = cv::imdecode(image_data, cv::IMREAD_COLOR);
-                    if (image.empty()) {
-                        throw std::runtime_error("Failed to decode image data");
+                        // Decode base64 image
+                        std::vector<unsigned char> image_data = base64_decode(image_base64);
+                        if (image_data.empty()) {
+                            throw std::runtime_error("Failed to decode base64 image");
+                        }
+
+                        image = cv::imdecode(image_data, cv::IMREAD_COLOR);
+                        if (image.empty()) {
+                            throw std::runtime_error("Failed to decode image data");
+                        }
                     }
 
                     // Get the model from ModelManager
@@ -369,23 +529,61 @@ private:
                     // Parse the JSON request
                     auto req_body = json::parse(request_.body());
                     std::string model_id = req_body["model_id"];
-                    std::string image_base64 = req_body["image"];
-
-                    // Remove data URL prefix if present
-                    size_t comma_pos = image_base64.find(',');
-                    if (comma_pos != std::string::npos) {
-                        image_base64 = image_base64.substr(comma_pos + 1);
+                    
+                    cv::Mat image;
+                    std::string sharedMemoryKey;
+                    bool useSharedMemory = false;
+                    
+                    // Check if using shared memory or base64
+                    if (req_body.contains("use_shared_memory") && req_body["use_shared_memory"].is_boolean()) {
+                        useSharedMemory = req_body["use_shared_memory"].get<bool>();
                     }
+                    
+                    if (useSharedMemory) {
+                        // Get image from shared memory
+                        if (!req_body.contains("shared_memory_key") || !req_body["shared_memory_key"].is_string()) {
+                            throw std::runtime_error("Shared memory key not provided");
+                        }
+                        
+                        sharedMemoryKey = req_body["shared_memory_key"].get<std::string>();
+                        std::cout << "Using shared memory with key: " << sharedMemoryKey << std::endl;
+                        
+                        try {
+                            // Get image from shared memory
+                            image = getImageFromSharedMemory(sharedMemoryKey);
+                            
+                            if (image.empty()) {
+                                throw std::runtime_error("Empty image received from shared memory");
+                            }
+                        } 
+                        catch (const std::exception& e) {
+                            throw std::runtime_error(std::string("Failed to load image from shared memory: ") + e.what());
+                        }
+                    } 
+                    else {
+                        // Use base64 image
+                        if (!req_body.contains("image") || !req_body["image"].is_string()) {
+                            throw std::runtime_error("Base64 image not provided");
+                        }
+                        
+                        std::string image_base64 = req_body["image"];
 
-                    // Decode base64 image
-                    std::vector<unsigned char> image_data = base64_decode(image_base64);
-                    if (image_data.empty()) {
-                        throw std::runtime_error("Failed to decode base64 image");
-                    }
+                        // Remove data URL prefix if present
+                        size_t comma_pos = image_base64.find(',');
+                        if (comma_pos != std::string::npos) {
+                            image_base64 = image_base64.substr(comma_pos + 1);
+                        }
 
-                    cv::Mat image = cv::imdecode(image_data, cv::IMREAD_COLOR);
-                    if (image.empty()) {
-                        throw std::runtime_error("Failed to decode image data");
+                        // Decode base64 image
+                        std::vector<unsigned char> image_data = base64_decode(image_base64);
+                        if (image_data.empty()) {
+                            throw std::runtime_error("Failed to decode base64 image");
+                        }
+
+                        image = cv::imdecode(image_data, cv::IMREAD_COLOR);
+                        if (image.empty()) {
+                            throw std::runtime_error("Failed to decode image data");
+                        }
                     }
 
                     // Get the model from ModelManager
