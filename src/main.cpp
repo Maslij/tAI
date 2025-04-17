@@ -5,6 +5,8 @@
 #include <iostream>
 #include <string>
 #include <filesystem>
+#include <opencv2/core.hpp>
+#include <opencv2/core/cuda.hpp>
 
 namespace fs = std::filesystem;
 
@@ -40,6 +42,14 @@ void loadImageClassifier(const std::string& modelName, const std::string& modelP
 
 int main() {
     try {
+        // Print OpenCV version and CUDA information
+        std::cout << "OpenCV Version: " << CV_VERSION << std::endl;
+        std::cout << "OpenCV CUDA Support: " << cv::cuda::getCudaEnabledDeviceCount() << " CUDA device(s) found" << std::endl;
+        if (cv::cuda::getCudaEnabledDeviceCount() > 0) {
+            cv::cuda::printCudaDeviceInfo(0);  // Print info for the first CUDA device
+        }
+        std::cout << std::endl;
+
         // Get the project directory
         fs::path exePath = fs::canonical("/proc/self/exe");
         fs::path projectDir = exePath.parent_path().parent_path().parent_path();  // Go up one more level
