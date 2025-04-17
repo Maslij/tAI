@@ -174,7 +174,7 @@ public:
             std::cout << "    Returns: JSON with status of all loaded models" << std::endl;
             std::cout << "  POST /detect" << std::endl;
             std::cout << "    Request body: {" << std::endl;
-            std::cout << "      \"model_id\": \"yolov3\", \"yolov4\", \"yolov4-tiny\", \"yolov3-tiny\", \"mobilenet-ssd\", \"yolox-nano\", or \"nanodet\"," << std::endl;
+            std::cout << "      \"model_id\": \"yolov4\" or \"yolov4-tiny\"," << std::endl;
             std::cout << "      \"image\": \"<base64_encoded_image>\"" << std::endl;
             std::cout << "      OR" << std::endl;
             std::cout << "      \"use_shared_memory\": true," << std::endl;
@@ -267,8 +267,7 @@ private:
                 
                 // Check for YOLO models
                 std::vector<std::string> yolo_models = {
-                    "yolov3", "yolov4", "yolov4-tiny", "yolov3-tiny", 
-                    "mobilenet-ssd", "yolox-nano", "nanodet"
+                    "yolov4", "yolov4-tiny"
                 };
                 
                 for (const auto& model_id : yolo_models) {
