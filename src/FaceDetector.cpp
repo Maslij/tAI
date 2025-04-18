@@ -1,6 +1,7 @@
 #include "FaceDetector.hpp"
 #include <opencv2/dnn.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/core/cuda.hpp>
 #include <fstream>
 #include <filesystem>
 #include <iostream>
@@ -37,14 +38,23 @@ bool FaceDetector::loadModel(const std::string& modelPath) {
         pImpl_->net = cv::dnn::readNetFromCaffe(prototxtPath.string(), caffemodelPath.string());
         
         // Use CUDA if available
+        bool useGPU = false;
         try {
-            pImpl_->net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
-            pImpl_->net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
-            std::cout << "Using CUDA backend for face detection" << std::endl;
+            // First check if CUDA is available
+            if (cv::cuda::getCudaEnabledDeviceCount() > 0) {
+                // Try setting CUDA backend and target
+                pImpl_->net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
+                pImpl_->net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
+                std::cout << "Using CUDA backend for face detection" << std::endl;
+                useGPU = true;
+            } else {
+                throw cv::Exception(0, "No CUDA devices found", "FaceDetector::loadModel", __FILE__, __LINE__);
+            }
         } catch (const cv::Exception& e) {
-            std::cout << "CUDA not available for face detection, using CPU" << std::endl;
+            std::cout << "CUDA not available or error setting up GPU inference, using CPU instead: " << e.what() << std::endl;
             pImpl_->net.setPreferableBackend(cv::dnn::DNN_BACKEND_DEFAULT);
             pImpl_->net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+            std::cout << "Using CPU backend for face detection" << std::endl;
         }
         
         return true;

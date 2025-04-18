@@ -7,6 +7,8 @@
 #include <filesystem>
 #include <opencv2/core.hpp>
 #include <opencv2/core/cuda.hpp>
+#include <opencv2/dnn.hpp>
+#include <opencv2/imgproc.hpp>
 
 namespace fs = std::filesystem;
 
@@ -44,9 +46,21 @@ int main() {
     try {
         // Print OpenCV version and CUDA information
         std::cout << "OpenCV Version: " << CV_VERSION << std::endl;
-        std::cout << "OpenCV CUDA Support: " << cv::cuda::getCudaEnabledDeviceCount() << " CUDA device(s) found" << std::endl;
-        if (cv::cuda::getCudaEnabledDeviceCount() > 0) {
-            cv::cuda::printCudaDeviceInfo(0);  // Print info for the first CUDA device
+        
+        // Check CUDA availability
+        int cudaDeviceCount = cv::cuda::getCudaEnabledDeviceCount();
+        std::cout << "OpenCV CUDA Support: " << cudaDeviceCount << " CUDA device(s) found" << std::endl;
+        
+        if (cudaDeviceCount > 0) {
+            try {
+                cv::cuda::printCudaDeviceInfo(0);  // Print info for the first CUDA device
+                std::cout << "CUDA capability available, but models will check compatibility individually" << std::endl;
+            } catch (const cv::Exception& e) {
+                std::cout << "Warning: CUDA devices found but error getting device info: " << e.what() << std::endl;
+                std::cout << "Will fall back to CPU for all operations" << std::endl;
+            }
+        } else {
+            std::cout << "No CUDA devices found. Running in CPU-only mode." << std::endl;
         }
         std::cout << std::endl;
 

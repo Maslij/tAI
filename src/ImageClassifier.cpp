@@ -1,6 +1,7 @@
 #include "ImageClassifier.hpp"
 #include <opencv2/dnn.hpp>
 #include <opencv2/imgproc.hpp>
+#include <opencv2/core/cuda.hpp>
 #include <fstream>
 #include <iostream>
 #include <filesystem>
@@ -26,14 +27,23 @@ public:
             net_ = cv::dnn::readNetFromCaffe(modelProtoPath.string(), modelWeightsPath.string());
             
             // Check if GPU/CUDA is available and use it
+            bool useGPU = false;
             try {
-                net_.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
-                net_.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
-                std::cout << "Using CUDA for image classification model" << std::endl;
+                // First check if CUDA is available
+                if (cv::cuda::getCudaEnabledDeviceCount() > 0) {
+                    // Try setting CUDA backend and target
+                    net_.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
+                    net_.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
+                    std::cout << "Using CUDA for image classification model" << std::endl;
+                    useGPU = true;
+                } else {
+                    throw cv::Exception(0, "No CUDA devices found", "CVImageClassifier::loadModel", __FILE__, __LINE__);
+                }
             } catch (const cv::Exception& e) {
-                std::cout << "CUDA not available, using CPU for image classification model: " << e.what() << std::endl;
+                std::cout << "CUDA not available or error setting up GPU inference, using CPU instead: " << e.what() << std::endl;
                 net_.setPreferableBackend(cv::dnn::DNN_BACKEND_DEFAULT);
                 net_.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
+                std::cout << "Using CPU backend for image classification" << std::endl;
             }
             
             // Load class names
