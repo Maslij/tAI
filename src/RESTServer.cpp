@@ -335,7 +335,7 @@ private:
                         }
                         
                         sharedMemoryKey = req_body["shared_memory_key"].get<std::string>();
-                        std::cout << "Using shared memory with key: " << sharedMemoryKey << std::endl;
+                        // std::cout << "Using shared memory with key: " << sharedMemoryKey << std::endl;
                         
                         try {
                             // Get image from shared memory
@@ -345,9 +345,9 @@ private:
                                 throw std::runtime_error("Empty image received from shared memory");
                             }
                             
-                            std::cout << "Successfully loaded image from shared memory: " 
-                                      << image.cols << "x" << image.rows << " channels=" 
-                                      << image.channels() << std::endl;
+                            // std::cout << "Successfully loaded image from shared memory: " 
+                            //           << image.cols << "x" << image.rows << " channels=" 
+                            //           << image.channels() << std::endl;
                         } 
                         catch (const std::exception& e) {
                             throw std::runtime_error(std::string("Failed to load image from shared memory: ") + e.what());
@@ -436,7 +436,7 @@ private:
                         }
                         
                         sharedMemoryKey = req_body["shared_memory_key"].get<std::string>();
-                        std::cout << "Using shared memory with key: " << sharedMemoryKey << std::endl;
+                        // std::cout << "Using shared memory with key: " << sharedMemoryKey << std::endl;
                         
                         try {
                             // Get image from shared memory
@@ -545,7 +545,7 @@ private:
                         }
                         
                         sharedMemoryKey = req_body["shared_memory_key"].get<std::string>();
-                        std::cout << "Using shared memory with key: " << sharedMemoryKey << std::endl;
+                        // std::cout << "Using shared memory with key: " << sharedMemoryKey << std::endl;
                         
                         try {
                             // Get image from shared memory
