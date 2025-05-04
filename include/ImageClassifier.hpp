@@ -19,7 +19,9 @@ public:
     
     virtual std::vector<Classification> classify(const cv::Mat& image) = 0;
     virtual bool loadModel(const std::string& modelPath) = 0;
+    virtual bool loadModel(const std::string& modelPath, const std::string& modelId) = 0;
     virtual std::vector<std::string> getClassNames() const = 0;
+    virtual std::string getCurrentModelId() const = 0;
 };
 
 class CVImageClassifier : public ImageClassifier {
@@ -29,7 +31,9 @@ public:
 
     std::vector<Classification> classify(const cv::Mat& image) override;
     bool loadModel(const std::string& modelPath) override;
+    bool loadModel(const std::string& modelPath, const std::string& modelId) override;
     std::vector<std::string> getClassNames() const override;
+    std::string getCurrentModelId() const override;
 
 private:
     class Impl;

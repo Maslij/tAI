@@ -32,14 +32,14 @@ void loadFaceModel(const std::string& modelName, const std::string& modelPath) {
     std::cout << "Successfully loaded " << modelName << std::endl;
 }
 
-void loadImageClassifier(const std::string& modelName, const std::string& modelPath) {
+void loadImageClassifier(const std::string& modelName, const std::string& modelPath, const std::string& modelId = "googlenet") {
     auto classifier = std::make_shared<tAI::CVImageClassifier>();
-    if (!classifier->loadModel(modelPath)) {
+    if (!classifier->loadModel(modelPath, modelId)) {
         std::cerr << "Failed to load " << modelName << " from " << modelPath << std::endl;
         return;
     }
     tAI::ModelManager::getInstance().registerModel(modelName, classifier);
-    std::cout << "Successfully loaded " << modelName << std::endl;
+    std::cout << "Successfully loaded " << modelName << " (" << modelId << ")" << std::endl;
 }
 
 int main() {
@@ -80,11 +80,11 @@ int main() {
         loadModel("yolov4-tiny", yolov4TinyBase);
         
         // Load face detection model - assuming model file is deploy.prototxt
-        std::string faceModelPath = (modelsDir / "face_detection" / "deploy.prototxt").string();
-        loadFaceModel("face_detection", faceModelPath);
+        std::string facePath = (modelsDir / "face_detection" / "deploy.prototxt").string();
+        loadFaceModel("face_detection", facePath);
 
-        // Load image classification model
-        std::string classificationPath = (modelsDir / "classification" / "deploy").string();
+        // Load image classifier model
+        std::string classificationPath = (modelsDir / "classification").string();
         loadImageClassifier("image_classification", classificationPath);
 
         // Create and start the REST server

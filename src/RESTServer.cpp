@@ -40,7 +40,6 @@ namespace {
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
-        64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64,
         64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64, 64
     };
 
@@ -296,6 +295,10 @@ private:
                 auto classifier = ModelManager::getInstance().getModel<ImageClassifier>("image_classification");
                 classification_model["status"] = classifier ? "loaded" : "not_loaded";
                 classification_model["type"] = "image_classification";
+                if (classifier) {
+                    classification_model["model_type"] = classifier->getCurrentModelId();
+                    classification_model["classes"] = classifier->getClassNames().size();
+                }
                 models.push_back(classification_model);
                 
                 response_json["models"] = models;
@@ -529,6 +532,12 @@ private:
                     auto req_body = json::parse(request_.body());
                     std::string model_id = req_body["model_id"];
                     
+                    // Check if model_type is specified
+                    std::string model_type = "googlenet"; // Default
+                    if (req_body.contains("model_type") && req_body["model_type"].is_string()) {
+                        model_type = req_body["model_type"].get<std::string>();
+                    }
+                    
                     cv::Mat image;
                     std::string sharedMemoryKey;
                     bool useSharedMemory = false;
@@ -590,7 +599,23 @@ private:
                     if(!classifier) {
                         throw std::runtime_error("Classification model not found");
                     }
-
+                    
+                    // Check if we need to update the model type
+                    if (classifier->getCurrentModelId() != model_type) {
+                        // We have the model loaded but with a different type, try to reload with the new type
+                        auto cvClassifier = std::dynamic_pointer_cast<CVImageClassifier>(classifier);
+                        if (cvClassifier) {
+                            // Get the models directory path
+                            std::string modelPath = "../models/classification";
+                            if (!cvClassifier->loadModel(modelPath, model_type)) {
+                                std::cerr << "Warning: Failed to switch model type to " << model_type 
+                                          << ", using existing model: " << classifier->getCurrentModelId() << std::endl;
+                            } else {
+                                std::cout << "Switched classification model to: " << model_type << std::endl;
+                            }
+                        }
+                    }
+                    
                     // Perform classification
                     auto classifications = classifier->classify(image);
 
