@@ -2,6 +2,7 @@
 #include "ObjectDetector.hpp"
 #include "FaceDetector.hpp"
 #include "ImageClassifier.hpp"
+#include "AgeGenderDetector.hpp"
 #include <iostream>
 #include <string>
 #include <filesystem>
@@ -40,6 +41,16 @@ void loadImageClassifier(const std::string& modelName, const std::string& modelP
     }
     tAI::ModelManager::getInstance().registerModel(modelName, classifier);
     std::cout << "Successfully loaded " << modelName << " (" << modelId << ")" << std::endl;
+}
+
+void loadAgeGenderModel(const std::string& modelName, const std::string& modelPath) {
+    auto ageGenderDetector = std::make_shared<tAI::AgeGenderDetector>();
+    if (!ageGenderDetector->loadModel(modelPath)) {
+        std::cerr << "Failed to load " << modelName << " from " << modelPath << std::endl;
+        return;
+    }
+    tAI::ModelManager::getInstance().registerModel(modelName, ageGenderDetector);
+    std::cout << "Successfully loaded " << modelName << std::endl;
 }
 
 int main() {
@@ -87,6 +98,10 @@ int main() {
         std::string classificationPath = (modelsDir / "classification").string();
         loadImageClassifier("image_classification", classificationPath);
 
+        // Load age and gender detection models
+        std::string ageGenderPath = (modelsDir / "age_gender").string();
+        loadAgeGenderModel("age_gender_detection", ageGenderPath);
+
         // Create and start the REST server
         tAI::RESTServer server("0.0.0.0", 8080);
         
@@ -105,6 +120,11 @@ int main() {
         std::cout << "  POST /classify" << std::endl;
         std::cout << "    Request body: {" << std::endl;
         std::cout << "      \"model_id\": \"image_classification\"," << std::endl;
+        std::cout << "      \"image\": \"<base64_encoded_image>\"" << std::endl;
+        std::cout << "    }" << std::endl;
+        std::cout << "  POST /detect_age_gender" << std::endl;
+        std::cout << "    Request body: {" << std::endl;
+        std::cout << "      \"model_id\": \"age_gender_detection\"," << std::endl;
         std::cout << "      \"image\": \"<base64_encoded_image>\"" << std::endl;
         std::cout << "    }" << std::endl;
         std::cout << "  GET /module_health" << std::endl;

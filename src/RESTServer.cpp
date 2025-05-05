@@ -2,6 +2,7 @@
 #include "ObjectDetector.hpp"
 #include "FaceDetector.hpp"
 #include "ImageClassifier.hpp"
+#include "AgeGenderDetector.hpp"
 #include <boost/beast/core.hpp>
 #include <boost/beast/http.hpp>
 #include <boost/beast/version.hpp>
@@ -300,6 +301,14 @@ private:
                     classification_model["classes"] = classifier->getClassNames().size();
                 }
                 models.push_back(classification_model);
+                
+                // Check age-gender detection model
+                json age_gender_model;
+                age_gender_model["id"] = "age_gender_detection";
+                auto age_gender_detector = ModelManager::getInstance().getModel<AgeGenderDetector>("age_gender_detection");
+                age_gender_model["status"] = age_gender_detector ? "loaded" : "not_loaded";
+                age_gender_model["type"] = "age_gender_detection";
+                models.push_back(age_gender_model);
                 
                 response_json["models"] = models;
                 
@@ -634,6 +643,133 @@ private:
                 }
                 catch(const std::exception& e) {
                     std::cerr << "Error processing classification request: " << e.what() << std::endl;
+                    response_.result(http::status::internal_server_error);
+                    response_.set(http::field::content_type, "text/plain");
+                    response_.body() = std::string("Error: ") + e.what();
+                }
+            }
+            else if(request_.target() == "/detect_age_gender") {
+                try {
+                    // Parse the JSON request
+                    auto req_body = json::parse(request_.body());
+                    std::string model_id = req_body["model_id"];
+                    
+                    cv::Mat image;
+                    std::string sharedMemoryKey;
+                    bool useSharedMemory = false;
+                    
+                    // Check if using shared memory or base64
+                    if (req_body.contains("use_shared_memory") && req_body["use_shared_memory"].is_boolean()) {
+                        useSharedMemory = req_body["use_shared_memory"].get<bool>();
+                    }
+                    
+                    if (useSharedMemory) {
+                        // Get image from shared memory
+                        if (!req_body.contains("shared_memory_key") || !req_body["shared_memory_key"].is_string()) {
+                            throw std::runtime_error("Shared memory key not provided");
+                        }
+                        
+                        sharedMemoryKey = req_body["shared_memory_key"].get<std::string>();
+                        
+                        try {
+                            // Get image from shared memory
+                            image = getImageFromSharedMemory(sharedMemoryKey);
+                            
+                            if (image.empty()) {
+                                throw std::runtime_error("Empty image received from shared memory");
+                            }
+                        } 
+                        catch (const std::exception& e) {
+                            throw std::runtime_error(std::string("Failed to load image from shared memory: ") + e.what());
+                        }
+                    } 
+                    else {
+                        // Use base64 image
+                        if (!req_body.contains("image") || !req_body["image"].is_string()) {
+                            throw std::runtime_error("Base64 image not provided");
+                        }
+                        
+                        std::string image_base64 = req_body["image"];
+
+                        // Remove data URL prefix if present
+                        size_t comma_pos = image_base64.find(',');
+                        if (comma_pos != std::string::npos) {
+                            image_base64 = image_base64.substr(comma_pos + 1);
+                        }
+
+                        // Decode base64 image
+                        std::vector<unsigned char> image_data = base64_decode(image_base64);
+                        if (image_data.empty()) {
+                            throw std::runtime_error("Failed to decode base64 image");
+                        }
+
+                        image = cv::imdecode(image_data, cv::IMREAD_COLOR);
+                        if (image.empty()) {
+                            throw std::runtime_error("Failed to decode image data");
+                        }
+                    }
+
+                    // First, we need to detect faces in the image
+                    auto faceDetector = ModelManager::getInstance().getModel<FaceDetector>("face_detection");
+                    if (!faceDetector) {
+                        throw std::runtime_error("Face detection model not found");
+                    }
+
+                    // Detect faces in the image
+                    auto faceDetections = faceDetector->detect(image);
+                    
+                    // Extract face bounding boxes
+                    std::vector<cv::Rect> faceRects;
+                    for (const auto& face : faceDetections) {
+                        faceRects.push_back(face.bbox);
+                    }
+
+                    // Now get the age-gender detector
+                    auto ageGenderDetector = ModelManager::getInstance().getModel<AgeGenderDetector>(model_id);
+                    if (!ageGenderDetector) {
+                        throw std::runtime_error("Age-gender detection model not found");
+                    }
+
+                    // Perform age and gender prediction
+                    auto predictions = ageGenderDetector->predict(image, faceRects);
+
+                    // Convert predictions to JSON
+                    json response_json = json::array();
+                    for (size_t i = 0; i < predictions.size(); i++) {
+                        const auto& pred = predictions[i];
+                        json prediction;
+                        prediction["age"] = pred.age;
+                        prediction["gender"] = pred.gender;
+                        prediction["age_confidence"] = pred.ageConfidence;
+                        prediction["gender_confidence"] = pred.genderConfidence;
+                        prediction["bbox"] = {
+                            {"x", pred.bbox.x},
+                            {"y", pred.bbox.y},
+                            {"width", pred.bbox.width},
+                            {"height", pred.bbox.height}
+                        };
+                        
+                        // Add face landmarks if available
+                        if (i < faceDetections.size() && !faceDetections[i].landmarks.empty()) {
+                            json landmarks_json = json::array();
+                            for (const auto& point : faceDetections[i].landmarks) {
+                                landmarks_json.push_back({
+                                    {"x", point.x},
+                                    {"y", point.y}
+                                });
+                            }
+                            prediction["landmarks"] = landmarks_json;
+                        }
+                        
+                        response_json.push_back(prediction);
+                    }
+
+                    response_.result(http::status::ok);
+                    response_.set(http::field::content_type, "application/json");
+                    response_.body() = response_json.dump();
+                }
+                catch (const std::exception& e) {
+                    std::cerr << "Error processing age-gender detection request: " << e.what() << std::endl;
                     response_.result(http::status::internal_server_error);
                     response_.set(http::field::content_type, "text/plain");
                     response_.body() = std::string("Error: ") + e.what();

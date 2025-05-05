@@ -47,6 +47,12 @@ echo "Downloading NanoDet..."
 mkdir -p "$MODELS_DIR/nanodet"
 wget -O "$MODELS_DIR/nanodet/nanodet-m.onnx" https://github.com/RangiLyu/nanodet/releases/download/v1.0.0-alpha-1/nanodet-m.onnx
 
+# Download Age and Gender detection models
+echo "Downloading Age and Gender detection models..."
+mkdir -p "$MODELS_DIR/age_gender"
+wget -O "$MODELS_DIR/age_gender/age_googlenet.onnx" https://github.com/onnx/models/raw/main/validated/vision/body_analysis/age_gender/models/age_googlenet.onnx
+wget -O "$MODELS_DIR/age_gender/gender_googlenet.onnx" https://github.com/onnx/models/raw/main/validated/vision/body_analysis/age_gender/models/gender_googlenet.onnx
+
 echo "All models downloaded."
 echo "Available models:"
 ls -la "$MODELS_DIR" 
