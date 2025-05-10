@@ -2,6 +2,7 @@ set(SOURCES
     YOLODetector.cpp
     FaceDetector.cpp
     ImageClassifier.cpp
+    AgeGenderDetector.cpp
     RESTServer.cpp
     main.cpp
 )

@@ -5,26 +5,35 @@
 #include <fstream>
 #include <iostream>
 #include <filesystem>
+#include <unordered_map>
 
 namespace fs = std::filesystem;
 
 namespace tAI {
+
+// Define supported model types
+enum class ClassifierModelType {
+    GOOGLENET,
+    RESNET50,
+    MOBILENET,
+    // Add more as needed
+};
 
 class CVImageClassifier::Impl {
 public:
     Impl() = default;
     ~Impl() = default;
 
-    bool loadModel(const std::string& modelPath) {
+    bool loadModel(const std::string& modelPath, const std::string& modelId = "googlenet") {
         try {
-            // Expect modelPath to be the base path, without extension
-            fs::path basePath = modelPath;
-            fs::path modelProtoPath = basePath.parent_path() / "deploy.prototxt";
-            fs::path modelWeightsPath = basePath.parent_path() / "deploy.caffemodel";
-            fs::path classNamesPath = basePath.parent_path() / "classes.txt";
+            // Convert modelId to model type
+            ClassifierModelType modelType = modelIdToType(modelId);
+            
+            // Get model configuration based on type
+            ModelConfig config = getModelConfig(modelType, modelPath);
             
             // Load the DNN model
-            net_ = cv::dnn::readNetFromCaffe(modelProtoPath.string(), modelWeightsPath.string());
+            net_ = cv::dnn::readNet(config.protoPath, config.weightsPath);
             
             // Check if GPU/CUDA is available and use it
             bool useGPU = false;
@@ -34,7 +43,7 @@ public:
                     // Try setting CUDA backend and target
                     net_.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
                     net_.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
-                    std::cout << "Using CUDA for image classification model" << std::endl;
+                    std::cout << "Using CUDA for image classification model: " << modelId << std::endl;
                     useGPU = true;
                 } else {
                     throw cv::Exception(0, "No CUDA devices found", "CVImageClassifier::loadModel", __FILE__, __LINE__);
@@ -48,7 +57,7 @@ public:
             
             // Load class names
             classNames_.clear();
-            std::ifstream classNamesFile(classNamesPath);
+            std::ifstream classNamesFile(config.classesPath);
             if (classNamesFile.is_open()) {
                 std::string line;
                 while (std::getline(classNamesFile, line)) {
@@ -56,9 +65,13 @@ public:
                 }
                 classNamesFile.close();
             } else {
-                std::cerr << "Failed to open class names file: " << classNamesPath << std::endl;
+                std::cerr << "Failed to open class names file: " << config.classesPath << std::endl;
                 return false;
             }
+            
+            // Store current model configuration
+            currentModelType_ = modelType;
+            currentModelId_ = modelId;
             
             return true;
         } catch (const std::exception& e) {
@@ -71,10 +84,15 @@ public:
         std::vector<Classification> classifications;
         
         try {
-            // Preprocess the image - resize to 224x224 which is standard for many classification models
-            cv::Mat blob = cv::dnn::blobFromImage(image, 1.0, cv::Size(224, 224), 
-                                                 cv::Scalar(104, 117, 123), // Subtract mean values
-                                                 true, false);
+            // Get model-specific preprocessing parameters
+            PreprocessParams params = getPreprocessParams(currentModelType_);
+            
+            // Preprocess the image based on model type
+            cv::Mat blob = cv::dnn::blobFromImage(image, params.scale, 
+                                                  params.size,
+                                                  params.mean,
+                                                  params.swapRB,
+                                                  params.crop);
             
             // Set the input and forward pass
             net_.setInput(blob);
@@ -110,10 +128,127 @@ public:
     std::vector<std::string> getClassNames() const {
         return classNames_;
     }
+    
+    std::string getCurrentModelId() const {
+        return currentModelId_;
+    }
 
 private:
+    struct ModelConfig {
+        std::string protoPath;
+        std::string weightsPath; 
+        std::string classesPath;
+    };
+    
+    struct PreprocessParams {
+        double scale;
+        cv::Size size;
+        cv::Scalar mean;
+        bool swapRB;
+        bool crop;
+    };
+    
+    ClassifierModelType modelIdToType(const std::string& modelId) {
+        static const std::unordered_map<std::string, ClassifierModelType> modelMap = {
+            {"googlenet", ClassifierModelType::GOOGLENET},
+            {"resnet50", ClassifierModelType::RESNET50},
+            {"mobilenet", ClassifierModelType::MOBILENET}
+            // Add more as needed
+        };
+        
+        auto it = modelMap.find(modelId);
+        if (it != modelMap.end()) {
+            return it->second;
+        }
+        // Default to GoogLeNet if not found
+        std::cerr << "Warning: Unknown model ID '" << modelId << "', defaulting to googlenet" << std::endl;
+        return ClassifierModelType::GOOGLENET;
+    }
+    
+    ModelConfig getModelConfig(ClassifierModelType type, const std::string& basePath) {
+        ModelConfig config;
+        fs::path baseDir = fs::path(basePath);
+        
+        // Make sure basePath is treated as a directory path, not as a file path
+        if (!fs::is_directory(baseDir)) {
+            baseDir = baseDir.parent_path();
+        }
+        
+        switch (type) {
+            case ClassifierModelType::GOOGLENET:
+                config.protoPath = (baseDir / "deploy.prototxt").string();
+                config.weightsPath = (baseDir / "deploy.caffemodel").string();
+                config.classesPath = (baseDir / "classes.txt").string();
+                break;
+                
+            case ClassifierModelType::RESNET50:
+                config.protoPath = (baseDir / "resnet50.prototxt").string();
+                config.weightsPath = (baseDir / "resnet50.caffemodel").string();
+                config.classesPath = (baseDir / "classes.txt").string();
+                break;
+                
+            case ClassifierModelType::MOBILENET:
+                config.protoPath = (baseDir / "mobilenet.prototxt").string();
+                config.weightsPath = (baseDir / "mobilenet.caffemodel").string();
+                config.classesPath = (baseDir / "classes.txt").string();
+                break;
+                
+            default:
+                // Default to GoogLeNet
+                config.protoPath = (baseDir / "deploy.prototxt").string();
+                config.weightsPath = (baseDir / "deploy.caffemodel").string();
+                config.classesPath = (baseDir / "classes.txt").string();
+                break;
+        }
+        
+        return config;
+    }
+    
+    PreprocessParams getPreprocessParams(ClassifierModelType type) {
+        PreprocessParams params;
+        
+        switch (type) {
+            case ClassifierModelType::GOOGLENET:
+                params.scale = 1.0;
+                params.size = cv::Size(224, 224);
+                params.mean = cv::Scalar(104, 117, 123);
+                params.swapRB = true;
+                params.crop = false;
+                break;
+                
+            case ClassifierModelType::RESNET50:
+                params.scale = 1.0;
+                params.size = cv::Size(224, 224);
+                params.mean = cv::Scalar(104, 117, 123);
+                params.swapRB = true;
+                params.crop = false;
+                break;
+                
+            case ClassifierModelType::MOBILENET:
+                params.scale = 1.0/255.0;
+                params.size = cv::Size(224, 224);
+                params.mean = cv::Scalar(0, 0, 0);
+                params.swapRB = true; 
+                params.crop = false;
+                break;
+                
+            default:
+                // Default to GoogLeNet parameters
+                params.scale = 1.0;
+                params.size = cv::Size(224, 224);
+                params.mean = cv::Scalar(104, 117, 123);
+                params.swapRB = true;
+                params.crop = false;
+                break;
+        }
+        
+        return params;
+    }
+
     cv::dnn::Net net_;
     std::vector<std::string> classNames_;
+    ClassifierModelType currentModelType_ = ClassifierModelType::GOOGLENET;
+    std::string currentModelId_ = "googlenet";
 };
 
 // Public interface implementation
@@ -127,11 +262,20 @@ std::vector<Classification> CVImageClassifier::classify(const cv::Mat& image) {
 }
 
 bool CVImageClassifier::loadModel(const std::string& modelPath) {
-    return pImpl_->loadModel(modelPath);
+    // Default to GoogleNet for backward compatibility
+    return pImpl_->loadModel(modelPath, "googlenet");
+}
+
+bool CVImageClassifier::loadModel(const std::string& modelPath, const std::string& modelId) {
+    return pImpl_->loadModel(modelPath, modelId);
 }
 
 std::vector<std::string> CVImageClassifier::getClassNames() const {
     return pImpl_->getClassNames();
+}
+
+std::string CVImageClassifier::getCurrentModelId() const {
+    return pImpl_->getCurrentModelId();
 }
 
 } // namespace tAI 
