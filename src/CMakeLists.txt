@@ -19,4 +19,6 @@ target_link_libraries(tAI_server
     ${Boost_LIBRARIES}
     ${CURL_LIBRARIES}
     nlohmann_json::nlohmann_json
+    rt
+    pthread
 ) 
