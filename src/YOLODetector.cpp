@@ -16,11 +16,11 @@ public:
     cv::dnn::Net net;
 #endif
     std::vector<std::string> classNames;
-    float confThreshold = 0.5f;
+    float confThreshold = 0.25f;
     float nmsThreshold = 0.4f;
 #ifdef USE_ONNXRUNTIME
-    int inputWidth = 640;
-    int inputHeight = 640;
+    int inputWidth = 416;
+    int inputHeight = 416;
 #else
     int inputWidth = 416;
     int inputHeight = 416;
@@ -212,22 +212,11 @@ std::vector<Detection> YOLODetector::processDetections(
     std::vector<Detection> detections;
     
     // Check if output is valid
-    if (output_tensors.empty() || !output_tensors[0].IsTensor()) {
+    if (output_tensors.empty()) {
         return detections;
     }
     
-    // Get pointer to output tensor
-    const float* output_data = output_tensors[0].GetTensorData<float>();
-    
-    // Get output tensor dimensions
-    auto tensor_info = output_tensors[0].GetTensorTypeAndShapeInfo();
-    auto output_shape = tensor_info.GetShape();
-    
-    // For YOLOv8 output format (boxes, scores, class indices)
-    // YOLO outputs are typically in the format [batch, num_detections, xywh+confidence+num_classes]
-    int num_detections = output_shape[1]; // Number of detected boxes
-    int elements_per_detection = output_shape[2]; // Elements per detection (xywh + conf + classes)
-    
+    // Setup variables for detection results
     std::vector<cv::Rect> boxes;
     std::vector<float> confidences;
     std::vector<int> class_ids;
@@ -235,50 +224,143 @@ std::vector<Detection> YOLODetector::processDetections(
     float x_factor = static_cast<float>(original_image_size.width) / pImpl_->inputWidth;
     float y_factor = static_cast<float>(original_image_size.height) / pImpl_->inputHeight;
     
-    for (int i = 0; i < num_detections; i++) {
-        const float* detection = output_data + i * elements_per_detection;
+    // YOLOv4 anchor boxes for each detection scale (typically 3 scales)
+    // These are the default anchors used in the original darknet CFG files
+    const std::vector<std::vector<std::vector<int>>> anchors = {
+        {{12, 16}, {19, 36}, {40, 28}},            // Small objects (yolo-layer0)
+        {{36, 75}, {76, 55}, {72, 146}},           // Medium objects (yolo-layer1) 
+        {{142, 110}, {192, 243}, {459, 401}}       // Large objects (yolo-layer2)
+    };
+    
+    // Number of classes (COCO has 80 classes)
+    const int num_classes = 80;
+    const int num_attributes = 5 + num_classes;  // x, y, w, h, objectness + classes
+    const int num_anchors = 3;
+    
+    // Process each output layer
+    for (size_t i = 0; i < output_tensors.size(); i++) {
+        if (!output_tensors[i].IsTensor()) {
+            continue;
+        }
         
-        float confidence = detection[4];
+        // Get output tensor data and shape
+        auto tensor_info = output_tensors[i].GetTensorTypeAndShapeInfo();
+        auto output_shape = tensor_info.GetShape();
         
-        if (confidence >= pImpl_->confThreshold) {
-            // Find the class with highest confidence
-            int class_id = 0;
-            float max_class_score = 0;
-            for (int j = 5; j < elements_per_detection; j++) {
-                if (detection[j] > max_class_score) {
-                    max_class_score = detection[j];
-                    class_id = j - 5;
+        // YOLOv4 outputs are in the shape [batch, num_anchors * (num_attributes), grid_h, grid_w]
+        if (output_shape.size() != 4) {
+            std::cerr << "Unexpected output shape: " << output_shape.size() << " dimensions" << std::endl;
+            continue;
+        }
+        
+        // Get dimensions
+        int batch_size = output_shape[0];
+        int channels = output_shape[1];
+        int grid_h = output_shape[2];
+        int grid_w = output_shape[3];
+        
+        // Get pointer to output tensor
+        const float* output_data = output_tensors[i].GetTensorData<float>();
+        
+        // Each anchor predicts bounding boxes
+        for (int anchor_idx = 0; anchor_idx < num_anchors; anchor_idx++) {
+            // Get anchor dimensions
+            int anchor_w = anchors[i][anchor_idx][0];
+            int anchor_h = anchors[i][anchor_idx][1];
+            
+            // Process grid cells
+            for (int row = 0; row < grid_h; row++) {
+                for (int col = 0; col < grid_w; col++) {
+                    // Calculate the starting index for this grid cell's channel data
+                    // For each anchor, we need to access its predictions in the channel dimension
+                    // The channel dimension stores all anchors sequentially
+                    int channel_offset = anchor_idx * num_attributes;
+                    
+                    // Calculate indices for this grid cell's bbox coordinates and objectness
+                    int idx_x = GetIndex(batch_size, channels, grid_h, grid_w, 0, channel_offset + 0, row, col);
+                    int idx_y = GetIndex(batch_size, channels, grid_h, grid_w, 0, channel_offset + 1, row, col);
+                    int idx_w = GetIndex(batch_size, channels, grid_h, grid_w, 0, channel_offset + 2, row, col);
+                    int idx_h = GetIndex(batch_size, channels, grid_h, grid_w, 0, channel_offset + 3, row, col);
+                    int idx_obj = GetIndex(batch_size, channels, grid_h, grid_w, 0, channel_offset + 4, row, col);
+                    
+                    // Get raw values
+                    float bbox_x = output_data[idx_x];
+                    float bbox_y = output_data[idx_y];
+                    float bbox_w = output_data[idx_w];
+                    float bbox_h = output_data[idx_h];
+                    float objectness = output_data[idx_obj];
+                    
+                    // Apply sigmoid to x, y, and objectness
+                    bbox_x = Sigmoid(bbox_x);
+                    bbox_y = Sigmoid(bbox_y);
+                    objectness = Sigmoid(objectness);
+                    
+                    // Process only if objectness is above threshold
+                    if (objectness >= pImpl_->confThreshold) {
+                        // Find the class with highest confidence
+                        int class_id = 0;
+                        float max_class_score = 0;
+                        
+                        // Loop through all class scores
+                        for (int cls = 0; cls < num_classes; cls++) {
+                            int idx_cls = GetIndex(batch_size, channels, grid_h, grid_w, 0, channel_offset + 5 + cls, row, col);
+                            float class_score = Sigmoid(output_data[idx_cls]);
+                            
+                            if (class_score > max_class_score) {
+                                max_class_score = class_score;
+                                class_id = cls;
+                            }
+                        }
+                        
+                        // Calculate final confidence as objectness * class_score
+                        float confidence = objectness * max_class_score;
+                        
+                        // Filter weak predictions
+                        if (confidence >= pImpl_->confThreshold) {
+                            // Transform bbox coordinates
+                            // x,y are offsets within grid cell (0-1)
+                            bbox_x = (col + bbox_x) / grid_w;
+                            bbox_y = (row + bbox_y) / grid_h;
+                            
+                            // w,h are exponential and relative to anchors
+                            bbox_w = std::exp(bbox_w) * anchor_w / pImpl_->inputWidth;
+                            bbox_h = std::exp(bbox_h) * anchor_h / pImpl_->inputHeight;
+                            
+                            // Convert to corner coordinates (left, top, right, bottom)
+                            int left = static_cast<int>((bbox_x - bbox_w/2) * original_image_size.width);
+                            int top = static_cast<int>((bbox_y - bbox_h/2) * original_image_size.height);
+                            int width = static_cast<int>(bbox_w * original_image_size.width);
+                            int height = static_cast<int>(bbox_h * original_image_size.height);
+                            
+                            // Ensure box is within image boundaries
+                            left = std::max(0, left);
+                            top = std::max(0, top);
+                            width = std::min(width, original_image_size.width - left);
+                            height = std::min(height, original_image_size.height - top);
+                            
+                            // Store the detection
+                            boxes.push_back(cv::Rect(left, top, width, height));
+                            confidences.push_back(confidence);
+                            class_ids.push_back(class_id);
+                        }
+                    }
                 }
             }
-            
-            // Calculate scaled bounding box
-            float x = detection[0] * x_factor;
-            float y = detection[1] * y_factor;
-            float w = detection[2] * x_factor;
-            float h = detection[3] * y_factor;
-            
-            // Convert to top-left coordinates
-            int left = int(x - w / 2);
-            int top = int(y - h / 2);
-            
-            boxes.push_back(cv::Rect(left, top, int(w), int(h)));
-            confidences.push_back(confidence);
-            class_ids.push_back(class_id);
         }
     }
     
-    // Apply Non-maximum Suppression
+    // Apply Non-Maximum Suppression to remove overlapping boxes
     std::vector<int> indices;
     cv::dnn::NMSBoxes(boxes, confidences, pImpl_->confThreshold, pImpl_->nmsThreshold, indices);
     
-    // Create detection objects
+    // Create detection objects from filtered boxes
     for (int idx : indices) {
         Detection det;
         det.bbox = boxes[idx];
         det.confidence = confidences[idx];
         det.classId = class_ids[idx];
         
-        // Ensure class_id is valid
+        // Set class name
         if (class_ids[idx] < pImpl_->classNames.size()) {
             det.className = pImpl_->classNames[class_ids[idx]];
         } else {
@@ -289,6 +371,16 @@ std::vector<Detection> YOLODetector::processDetections(
     }
     
     return detections;
+}
+
+// Helper function to calculate indices for NCHW tensor format
+inline int YOLODetector::GetIndex(int batch, int channels, int height, int width, int b, int c, int h, int w) {
+    return ((b * channels + c) * height + h) * width + w;
+}
+
+// Helper sigmoid function
+inline float YOLODetector::Sigmoid(float x) {
+    return 1.0f / (1.0f + std::exp(-x));
 }
 #else
 void YOLODetector::Impl::postprocess(const cv::Mat& frame, const std::vector<cv::Mat>& outs, std::vector<Detection>& detections) {

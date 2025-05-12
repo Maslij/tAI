@@ -67,6 +67,10 @@ private:
     std::vector<Detection> processDetections(
         const std::vector<Ort::Value>& output_tensors,
         const cv::Size& original_image_size) override;
+        
+    // Helper functions for YOLO detection processing
+    inline int GetIndex(int batch, int channels, int height, int width, int b, int c, int h, int w);
+    inline float Sigmoid(float x);
 #endif
 };
 
