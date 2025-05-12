@@ -39,6 +39,13 @@ PROJECT_DIR="$( dirname "$SCRIPT_DIR" )"
 mkdir -p "$PROJECT_DIR/build"
 cd "$PROJECT_DIR/build"
 
+# Verify ONNX Runtime is installed
+if [ ! -f "/usr/local/lib/libonnxruntime.so" ] && [ ! -f "/usr/lib/libonnxruntime.so" ]; then
+  echo "ERROR: ONNX Runtime is required but not found."
+  echo "Please install ONNX Runtime before building."
+  exit 1
+fi
+
 # Configure and build
 cmake -DCMAKE_BUILD_TYPE=$BUILD_TYPE -DBUILD_TESTS=$BUILD_TESTS ..
 cmake --build . -- -j$(nproc)

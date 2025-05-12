@@ -1,43 +1,101 @@
 #include "ObjectDetector.hpp"
 #include <opencv2/imgproc.hpp>
-#include <opencv2/dnn.hpp>
-#include <opencv2/core/cuda.hpp>
 #include <fstream>
 #include <filesystem>
 #include <iostream>
+#include <algorithm>
+#include <numeric>  // For std::iota
 
 namespace fs = std::filesystem;
 
 namespace tAI {
 
+// Implementation of NMS (Non-maximum suppression) since we no longer use opencv dnn
+float calculateIoU(const cv::Rect& box1, const cv::Rect& box2) {
+    int x1 = std::max(box1.x, box2.x);
+    int y1 = std::max(box1.y, box2.y);
+    int x2 = std::min(box1.x + box1.width, box2.x + box2.width);
+    int y2 = std::min(box1.y + box1.height, box2.y + box2.height);
+    
+    if (x2 < x1 || y2 < y1) {
+        return 0.0f;
+    }
+    
+    float intersection_area = static_cast<float>((x2 - x1) * (y2 - y1));
+    float box1_area = static_cast<float>(box1.width * box1.height);
+    float box2_area = static_cast<float>(box2.width * box2.height);
+    
+    return intersection_area / (box1_area + box2_area - intersection_area);
+}
+
+void nmsBoxes(const std::vector<cv::Rect>& boxes, 
+              const std::vector<float>& scores,
+              float score_threshold, 
+              float nms_threshold,
+              std::vector<int>& indices) {
+    
+    // Create index array
+    std::vector<size_t> sortedIndices(scores.size());
+    std::iota(sortedIndices.begin(), sortedIndices.end(), 0);
+    
+    // Sort indices by scores in descending order
+    std::sort(sortedIndices.begin(), sortedIndices.end(),
+              [&scores](size_t i1, size_t i2) { return scores[i1] > scores[i2]; });
+    
+    std::vector<bool> suppressed(scores.size(), false);
+    indices.clear();
+    
+    for (size_t i = 0; i < sortedIndices.size(); ++i) {
+        size_t idx = sortedIndices[i];
+        
+        if (suppressed[idx] || scores[idx] < score_threshold) {
+            continue;
+        }
+        
+        indices.push_back(idx);
+        
+        // Suppress all boxes with sufficient overlap
+        for (size_t j = i + 1; j < sortedIndices.size(); ++j) {
+            size_t idx2 = sortedIndices[j];
+            
+            if (suppressed[idx2]) {
+                continue;
+            }
+            
+            float overlap = calculateIoU(boxes[idx], boxes[idx2]);
+            if (overlap > nms_threshold) {
+                suppressed[idx2] = true;
+            }
+        }
+    }
+}
+
 class YOLODetector::Impl {
 public:
-#ifndef USE_ONNXRUNTIME
-    cv::dnn::Net net;
-#endif
     std::vector<std::string> classNames;
     float confThreshold = 0.25f;
     float nmsThreshold = 0.4f;
-#ifdef USE_ONNXRUNTIME
     int inputWidth = 416;
     int inputHeight = 416;
-#else
-    int inputWidth = 416;
-    int inputHeight = 416;
-    
-    void postprocess(const cv::Mat& frame, const std::vector<cv::Mat>& outs, std::vector<Detection>& detections);
-#endif
+    bool isTinyModel = false;
 };
 
 YOLODetector::YOLODetector() : pImpl_(std::make_unique<Impl>()) {}
 YOLODetector::~YOLODetector() = default;
 
-#ifdef USE_ONNXRUNTIME
 bool YOLODetector::loadModel(const std::string& modelPath) {
     try {
         // First call the base class implementation to load the ONNX model
         if (!ONNXObjectDetector::loadModel(modelPath)) {
             return false;
+        }
+        
+        // Check if this is a tiny model based on filename
+        std::string filename = fs::path(modelPath).filename().string();
+        pImpl_->isTinyModel = (filename.find("tiny") != std::string::npos);
+        
+        if (pImpl_->isTinyModel) {
+            std::cout << "Detected tiny YOLO model variant" << std::endl;
         }
         
         // Load class names from coco.names
@@ -71,68 +129,11 @@ bool YOLODetector::loadModel(const std::string& modelPath) {
         return false;
     }
 }
-#else
-bool YOLODetector::loadModel(const std::string& modelPath) {
-    try {
-        // Load names of classes from coco.names
-        fs::path modelDir = fs::path(modelPath).parent_path();
-        std::string classesFile = (modelDir / "coco.names").string();
-        std::ifstream ifs(classesFile.c_str());
-        if (!ifs.is_open()) {
-            std::cerr << "Failed to open classes file: " << classesFile << std::endl;
-            return false;
-        }
-        
-        std::string line;
-        while (std::getline(ifs, line)) {
-            pImpl_->classNames.push_back(line);
-        }
-        
-        // Load the network
-        std::string configFile = modelPath + ".cfg";
-        std::string weightsFile = modelPath + ".weights";
-        
-        if (!fs::exists(configFile) || !fs::exists(weightsFile)) {
-            std::cerr << "Config or weights file not found" << std::endl;
-            return false;
-        }
-        
-        pImpl_->net = cv::dnn::readNetFromDarknet(configFile, weightsFile);
-        
-        // Use CUDA if available
-        bool useGPU = false;
-        try {
-            // First check if CUDA is available
-            if (cv::cuda::getCudaEnabledDeviceCount() > 0) {
-                // Try setting CUDA backend and target
-                pImpl_->net.setPreferableBackend(cv::dnn::DNN_BACKEND_CUDA);
-                pImpl_->net.setPreferableTarget(cv::dnn::DNN_TARGET_CUDA);
-                std::cout << "Using CUDA backend for YOLOv4 detection" << std::endl;
-                useGPU = true;
-            } else {
-                throw cv::Exception(0, "No CUDA devices found", "YOLODetector::loadModel", __FILE__, __LINE__);
-            }
-        } catch (const cv::Exception& e) {
-            std::cout << "CUDA not available or error setting up GPU inference, using CPU instead: " << e.what() << std::endl;
-            pImpl_->net.setPreferableBackend(cv::dnn::DNN_BACKEND_DEFAULT);
-            pImpl_->net.setPreferableTarget(cv::dnn::DNN_TARGET_CPU);
-            std::cout << "Using CPU backend for YOLOv4 detection" << std::endl;
-        }
-        
-        return true;
-    }
-    catch (const std::exception& e) {
-        std::cerr << "Error loading model: " << e.what() << std::endl;
-        return false;
-    }
-}
-#endif
 
 std::vector<Detection> YOLODetector::detect(const cv::Mat& image) {
     std::vector<Detection> detections;
     
     try {
-#ifdef USE_ONNXRUNTIME
         if (!session_) {
             throw std::runtime_error("Model not loaded");
         }
@@ -183,19 +184,6 @@ std::vector<Detection> YOLODetector::detect(const cv::Mat& image) {
         
         // Process detections
         detections = processDetections(output_tensors, image.size());
-#else
-        cv::Mat blob;
-        cv::dnn::blobFromImage(image, blob, 1/255.0, 
-                              cv::Size(pImpl_->inputWidth, pImpl_->inputHeight),
-                              cv::Scalar(0,0,0), true, false);
-        
-        pImpl_->net.setInput(blob);
-        
-        std::vector<cv::Mat> outs;
-        pImpl_->net.forward(outs, pImpl_->net.getUnconnectedOutLayersNames());
-        
-        pImpl_->postprocess(image, outs, detections);
-#endif
     }
     catch (const std::exception& e) {
         std::cerr << "Error during detection: " << e.what() << std::endl;
@@ -204,7 +192,6 @@ std::vector<Detection> YOLODetector::detect(const cv::Mat& image) {
     return detections;
 }
 
-#ifdef USE_ONNXRUNTIME
 std::vector<Detection> YOLODetector::processDetections(
     const std::vector<Ort::Value>& output_tensors,
     const cv::Size& original_image_size) 
@@ -224,13 +211,24 @@ std::vector<Detection> YOLODetector::processDetections(
     float x_factor = static_cast<float>(original_image_size.width) / pImpl_->inputWidth;
     float y_factor = static_cast<float>(original_image_size.height) / pImpl_->inputHeight;
     
-    // YOLOv4 anchor boxes for each detection scale (typically 3 scales)
-    // These are the default anchors used in the original darknet CFG files
-    const std::vector<std::vector<std::vector<int>>> anchors = {
-        {{12, 16}, {19, 36}, {40, 28}},            // Small objects (yolo-layer0)
-        {{36, 75}, {76, 55}, {72, 146}},           // Medium objects (yolo-layer1) 
-        {{142, 110}, {192, 243}, {459, 401}}       // Large objects (yolo-layer2)
-    };
+    // Different anchor boxes for regular and tiny models
+    std::vector<std::vector<std::vector<int>>> anchors;
+    
+    if (pImpl_->isTinyModel || output_tensors.size() == 2) {
+        // YOLOv4-tiny has 2 output layers with these anchors
+        anchors = {
+            {{81, 82}, {135, 169}, {344, 319}},   // Scale 1 (larger objects)
+            {{23, 27}, {37, 58}, {81, 82}}        // Scale 0 (smaller objects)
+        };
+        std::cout << "Using tiny YOLO anchors with " << output_tensors.size() << " outputs" << std::endl;
+    } else {
+        // Regular YOLOv4 has 3 output layers with these anchors
+        anchors = {
+            {{12, 16}, {19, 36}, {40, 28}},            // Small objects (yolo-layer0)
+            {{36, 75}, {76, 55}, {72, 146}},           // Medium objects (yolo-layer1) 
+            {{142, 110}, {192, 243}, {459, 401}}       // Large objects (yolo-layer2)
+        };
+    }
     
     // Number of classes (COCO has 80 classes)
     const int num_classes = 80;
@@ -351,7 +349,7 @@ std::vector<Detection> YOLODetector::processDetections(
     
     // Apply Non-Maximum Suppression to remove overlapping boxes
     std::vector<int> indices;
-    cv::dnn::NMSBoxes(boxes, confidences, pImpl_->confThreshold, pImpl_->nmsThreshold, indices);
+    nmsBoxes(boxes, confidences, pImpl_->confThreshold, pImpl_->nmsThreshold, indices);
     
     // Create detection objects from filtered boxes
     for (int idx : indices) {
@@ -382,53 +380,9 @@ inline int YOLODetector::GetIndex(int batch, int channels, int height, int width
 inline float YOLODetector::Sigmoid(float x) {
     return 1.0f / (1.0f + std::exp(-x));
 }
-#else
-void YOLODetector::Impl::postprocess(const cv::Mat& frame, const std::vector<cv::Mat>& outs, std::vector<Detection>& detections) {
-    std::vector<int> classIds;
-    std::vector<float> confidences;
-    std::vector<cv::Rect> boxes;
-    
-    for (const auto& out : outs) {
-        for (int i = 0; i < out.rows; ++i) {
-            const float* data = (float*)out.row(i).data;
-            
-            cv::Mat scores = out.row(i).colRange(5, out.cols);
-            cv::Point classIdPoint;
-            double confidence;
-            cv::minMaxLoc(scores, nullptr, &confidence, nullptr, &classIdPoint);
-            
-            if (confidence > confThreshold) {
-                int centerX = (int)(data[0] * frame.cols);
-                int centerY = (int)(data[1] * frame.rows);
-                int width = (int)(data[2] * frame.cols);
-                int height = (int)(data[3] * frame.rows);
-                int left = centerX - width / 2;
-                int top = centerY - height / 2;
-                
-                classIds.push_back(classIdPoint.x);
-                confidences.push_back((float)confidence);
-                boxes.push_back(cv::Rect(left, top, width, height));
-            }
-        }
-    }
-    
-    std::vector<int> indices;
-    cv::dnn::NMSBoxes(boxes, confidences, confThreshold, nmsThreshold, indices);
-    
-    for (size_t i = 0; i < indices.size(); ++i) {
-        int idx = indices[i];
-        Detection det;
-        det.bbox = boxes[idx];
-        det.confidence = confidences[idx];
-        det.classId = classIds[idx];
-        det.className = classNames[classIds[idx]];
-        detections.push_back(det);
-    }
-}
-#endif
 
 std::vector<std::string> YOLODetector::getClassNames() const {
     return pImpl_->classNames;
 }
 
-} // namespace tAI 
+} // namespace tAI

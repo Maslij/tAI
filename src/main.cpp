@@ -8,52 +8,18 @@
 #include <filesystem>
 #include <opencv2/core.hpp>
 #include <opencv2/core/cuda.hpp>
-#include <opencv2/dnn.hpp>
 #include <opencv2/imgproc.hpp>
 
 namespace fs = std::filesystem;
 
-void loadModel(const std::string& modelName, const std::string& modelPath) {
-    // Check if this is an ONNX model (either the path ends with .onnx or the directory contains an .onnx file)
-    bool isOnnxModel = false;
-    std::string onnxPath = modelPath;
+void loadOnnxModel(const std::string& modelName, const std::string& onnxPath) {
+    std::cout << "Loading ONNX model: " << onnxPath << std::endl;
     
-    // Check if model path ends with .onnx
-    if (modelPath.size() > 5 && modelPath.substr(modelPath.size() - 5) == ".onnx") {
-        isOnnxModel = true;
-    } else {
-        // Check if there's an .onnx file in the directory with the same base name
-        std::string onnxFilePath = modelPath + ".onnx";
-        if (fs::exists(onnxFilePath)) {
-            onnxPath = onnxFilePath;
-            isOnnxModel = true;
-        } else {
-            // Check if there's an .onnx file in the directory
-            for (const auto& entry : fs::directory_iterator(fs::path(modelPath).parent_path())) {
-                if (entry.path().extension() == ".onnx" && 
-                    entry.path().stem().string().find(fs::path(modelPath).stem().string()) != std::string::npos) {
-                    onnxPath = entry.path().string();
-                    isOnnxModel = true;
-                    break;
-                }
-            }
-        }
-    }
-    
-    // Create the appropriate detector
+    // Create the YOLO detector
     auto yolo = std::make_shared<tAI::YOLODetector>();
     
     // Load the model
-    bool success = false;
-    if (isOnnxModel) {
-        std::cout << "Loading ONNX model: " << onnxPath << std::endl;
-        success = yolo->loadModel(onnxPath);
-    } else {
-        std::cout << "Loading standard model: " << modelPath << std::endl;
-        success = yolo->loadModel(modelPath);
-    }
-    
-    if (!success) {
+    if (!yolo->loadModel(onnxPath)) {
         std::cerr << "Failed to load " << modelName << std::endl;
         return;
     }
@@ -121,17 +87,16 @@ int main() {
 
         std::cout << "Looking for models in: " << modelsDir << std::endl;
 
-        // Load YOLOv4
-        std::string yolov4Base = (modelsDir / "yolov4").string();
-        loadModel("yolov4", yolov4Base);
-
-        // Load YOLOv4-tiny
-        std::string yolov4TinyBase = (modelsDir / "yolov4-tiny").string();
-        loadModel("yolov4-tiny", yolov4TinyBase);
+        // Load YOLO ONNX models
+        fs::path yoloOnnxDir = modelsDir / "yolo_onnx";
         
         // Load YOLOv4-416 ONNX model
-        std::string yolov4OnnxBase = (modelsDir / "yolov4-416").string();
-        loadModel("yolov4-416", yolov4OnnxBase);
+        std::string yolov4OnnxPath = (yoloOnnxDir / "yolov4-416.onnx").string();
+        loadOnnxModel("yolov4-416", yolov4OnnxPath);
+        
+        // Load YOLOv4-tiny ONNX model
+        std::string yolov4TinyOnnxPath = (yoloOnnxDir / "yolov4-tiny-416.onnx").string();
+        loadOnnxModel("yolov4-tiny", yolov4TinyOnnxPath);
         
         // Load face detection model - assuming model file is deploy.prototxt
         std::string facePath = (modelsDir / "face_detection" / "deploy.prototxt").string();
@@ -152,7 +117,7 @@ int main() {
         std::cout << "Available endpoints:" << std::endl;
         std::cout << "  POST /detect" << std::endl;
         std::cout << "    Request body: {" << std::endl;
-        std::cout << "      \"model_id\": \"yolov4\", \"yolov4-tiny\", or \"yolov4-416\"," << std::endl;
+        std::cout << "      \"model_id\": \"yolov4-416\" or \"yolov4-tiny\"," << std::endl;
         std::cout << "      \"image\": \"<base64_encoded_image>\"" << std::endl;
         std::cout << "    }" << std::endl;
         std::cout << "  POST /detect_faces" << std::endl;
@@ -181,4 +146,4 @@ int main() {
     }
 
     return 0;
-} 
+}

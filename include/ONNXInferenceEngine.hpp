@@ -4,14 +4,10 @@
 #include <string>
 #include <vector>
 #include <opencv2/core.hpp>
-
-#ifdef USE_ONNXRUNTIME
 #include "/usr/local/include/onnxruntime/onnxruntime_cxx_api.h"
-#endif
 
 namespace tAI {
 
-#ifdef USE_ONNXRUNTIME
 // Base class for all ONNX inference engines
 class ONNXInferenceEngine {
 public:
@@ -55,21 +51,5 @@ protected:
     std::vector<const char*> getInputNames() const;
     std::vector<const char*> getOutputNames() const;
 };
-#else
-// Stub class for when ONNXRuntime is not available
-class ONNXInferenceEngine {
-public:
-    ONNXInferenceEngine() {}
-    virtual ~ONNXInferenceEngine() = default;
-    
-    virtual bool loadModel(const std::string& modelPath) { 
-        return false; 
-    }
-    
-    bool isGPUAvailable() const { 
-        return false; 
-    }
-};
-#endif
 
 } // namespace tAI 

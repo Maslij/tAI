@@ -4,15 +4,10 @@ set(SOURCES
     ImageClassifier.cpp
     AgeGenderDetector.cpp
     RESTServer.cpp
+    ONNXInferenceEngine.cpp
+    ONNXObjectDetector.cpp
     main.cpp
 )
-
-if(USE_ONNXRUNTIME)
-    list(APPEND SOURCES 
-        ONNXInferenceEngine.cpp
-        ONNXObjectDetector.cpp
-    )
-endif()
 
 add_executable(tAI_server ${SOURCES})
 
@@ -27,12 +22,9 @@ set(LINK_LIBRARIES
     ${Boost_LIBRARIES}
     ${CURL_LIBRARIES}
     nlohmann_json::nlohmann_json
+    ${ONNXRUNTIME_LIBRARY}
     rt
     pthread
 )
-
-if(USE_ONNXRUNTIME)
-    list(APPEND LINK_LIBRARIES ${ONNXRUNTIME_LIBRARY})
-endif()
 
 target_link_libraries(tAI_server PRIVATE ${LINK_LIBRARIES}) 

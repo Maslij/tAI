@@ -29,7 +29,6 @@ public:
     virtual std::vector<std::string> getClassNames() const = 0;
 };
 
-#ifdef USE_ONNXRUNTIME
 // ONNX-based object detector
 class ONNXObjectDetector : public ObjectDetector, public ONNXInferenceEngine {
 public:
@@ -46,10 +45,6 @@ protected:
 };
 
 class YOLODetector : public ONNXObjectDetector {
-#else
-// Fallback to OpenCV-based detector when ONNXRuntime is not available
-class YOLODetector : public ObjectDetector {
-#endif
 public:
     YOLODetector();
     ~YOLODetector() override;
@@ -62,7 +57,6 @@ private:
     class Impl;
     std::unique_ptr<Impl> pImpl_;
     
-#ifdef USE_ONNXRUNTIME
     // Process YOLO detections from ONNX output
     std::vector<Detection> processDetections(
         const std::vector<Ort::Value>& output_tensors,
@@ -71,7 +65,6 @@ private:
     // Helper functions for YOLO detection processing
     inline int GetIndex(int batch, int channels, int height, int width, int b, int c, int h, int w);
     inline float Sigmoid(float x);
-#endif
 };
 
 } // namespace tAI 

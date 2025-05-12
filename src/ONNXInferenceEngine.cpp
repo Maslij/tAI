@@ -3,7 +3,6 @@
 
 namespace tAI {
 
-#ifdef USE_ONNXRUNTIME
 ONNXInferenceEngine::ONNXInferenceEngine() 
     : env_(std::make_shared<Ort::Env>(ORT_LOGGING_LEVEL_WARNING, "ONNXInferenceEngine")),
       memory_info_(Ort::MemoryInfo::CreateCpu(OrtArenaAllocator, OrtMemTypeDefault)) 
@@ -128,6 +127,5 @@ std::vector<const char*> ONNXInferenceEngine::getOutputNames() const {
     }
     return result;
 }
-#endif // USE_ONNXRUNTIME
 
 } // namespace tAI 
