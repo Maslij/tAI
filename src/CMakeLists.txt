@@ -7,6 +7,13 @@ set(SOURCES
     main.cpp
 )
 
+if(USE_ONNXRUNTIME)
+    list(APPEND SOURCES 
+        ONNXInferenceEngine.cpp
+        ONNXObjectDetector.cpp
+    )
+endif()
+
 add_executable(tAI_server ${SOURCES})
 
 target_include_directories(tAI_server
@@ -14,12 +21,18 @@ target_include_directories(tAI_server
     ${PROJECT_SOURCE_DIR}/include
 )
 
-target_link_libraries(tAI_server
-    PRIVATE
+# Libraries to link
+set(LINK_LIBRARIES
     ${OpenCV_LIBS}
     ${Boost_LIBRARIES}
     ${CURL_LIBRARIES}
     nlohmann_json::nlohmann_json
     rt
     pthread
-) 
+)
+
+if(USE_ONNXRUNTIME)
+    list(APPEND LINK_LIBRARIES ${ONNXRUNTIME_LIBRARY})
+endif()
+
+target_link_libraries(tAI_server PRIVATE ${LINK_LIBRARIES}) 

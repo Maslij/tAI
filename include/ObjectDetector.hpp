@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <opencv2/core.hpp>
+#include "ONNXInferenceEngine.hpp"
 
 namespace tAI {
 
@@ -28,7 +29,27 @@ public:
     virtual std::vector<std::string> getClassNames() const = 0;
 };
 
+#ifdef USE_ONNXRUNTIME
+// ONNX-based object detector
+class ONNXObjectDetector : public ObjectDetector, public ONNXInferenceEngine {
+public:
+    ONNXObjectDetector() = default;
+    ~ONNXObjectDetector() override = default;
+    
+    bool loadModel(const std::string& modelPath) override;
+    
+protected:
+    // Process detections from ONNX output
+    virtual std::vector<Detection> processDetections(
+        const std::vector<Ort::Value>& output_tensors,
+        const cv::Size& original_image_size) = 0;
+};
+
+class YOLODetector : public ONNXObjectDetector {
+#else
+// Fallback to OpenCV-based detector when ONNXRuntime is not available
 class YOLODetector : public ObjectDetector {
+#endif
 public:
     YOLODetector();
     ~YOLODetector() override;
@@ -40,6 +61,13 @@ public:
 private:
     class Impl;
     std::unique_ptr<Impl> pImpl_;
+    
+#ifdef USE_ONNXRUNTIME
+    // Process YOLO detections from ONNX output
+    std::vector<Detection> processDetections(
+        const std::vector<Ort::Value>& output_tensors,
+        const cv::Size& original_image_size) override;
+#endif
 };
 
 } // namespace tAI 
